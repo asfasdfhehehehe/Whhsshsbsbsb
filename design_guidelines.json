@@ -1,0 +1,123 @@
+{
+  "identity": {
+    "persona": "E1: The Anti-AI Designer",
+    "mission": "Create a 'Tactical Terminal' trading dashboard that feels like a pro tool, not a generic SaaS.",
+    "principles": [
+      "Density over Whitespace: Traders need data, not empty space.",
+      "Function is Beauty: The aesthetic comes from the raw data visualization.",
+      "Dark Mode Only: Optimized for low-light environments.",
+      "Monospace is King: All numbers and data must use monospaced fonts."
+    ]
+  },
+  "typography": {
+    "primary_font": "Manrope",
+    "secondary_font": "JetBrains Mono",
+    "usage": {
+      "headings": "Manrope, font-bold, tracking-tight",
+      "body": "Manrope, font-normal",
+      "data_numbers": "JetBrains Mono, font-medium, tracking-wide",
+      "code_snippets": "JetBrains Mono"
+    },
+    "installation": "import '@fontsource/manrope'; import '@fontsource/jetbrains-mono';"
+  },
+  "colors": {
+    "palette_name": "Solana Tactical",
+    "mode": "dark",
+    "background": {
+      "app_bg": "#09090b",
+      "card_bg": "#121214",
+      "panel_bg": "#18181b"
+    },
+    "text": {
+      "primary": "#FAFAFA",
+      "secondary": "#A1A1AA",
+      "muted": "#52525B"
+    },
+    "accents": {
+      "primary": "#14F195",
+      "secondary": "#9945FF",
+      "success": "#22C55E",
+      "warning": "#EAB308",
+      "error": "#EF4444",
+      "info": "#3B82F6"
+    },
+    "borders": {
+      "subtle": "#27272A",
+      "active": "#3F3F46",
+      "highlight": "#14F195"
+    }
+  },
+  "layout": {
+    "grid_system": "Bento Grid Mode B (High Density)",
+    "spacing_scale": "Compact (p-3, p-4, gap-3)",
+    "container_style": "Fluid width, max-w-[1920px] mx-auto",
+    "structure": {
+      "sidebar": "Fixed width (64px or 240px), border-r border-zinc-800",
+      "main_content": "Grid layout: grid-cols-12 gap-4 p-4",
+      "widgets": "h-full w-full flex flex-col"
+    }
+  },
+  "components": {
+    "global_style": {
+      "radius": "rounded-sm",
+      "shadows": "none",
+      "borders": "border border-zinc-800"
+    },
+    "buttons": {
+      "primary": "bg-[#14F195] text-black hover:bg-[#14F195]/90 font-bold uppercase tracking-wider text-xs rounded-sm",
+      "secondary": "bg-zinc-800 text-white hover:bg-zinc-700 border border-zinc-700 rounded-sm",
+      "destructive": "bg-red-900/20 text-red-500 border border-red-900/50 hover:bg-red-900/40 rounded-sm",
+      "ghost": "hover:bg-zinc-800 text-zinc-400 hover:text-white rounded-sm"
+    },
+    "cards": {
+      "base": "bg-[#121214] border border-zinc-800 rounded-sm p-4",
+      "header": "border-b border-zinc-800 pb-3 mb-3 flex justify-between items-center"
+    },
+    "inputs": {
+      "style": "bg-zinc-950 border-zinc-800 focus:border-[#14F195] focus:ring-0 rounded-sm font-mono text-sm"
+    },
+    "tables": {
+      "style": "w-full text-sm text-left",
+      "header": "text-zinc-500 font-mono text-xs uppercase tracking-wider border-b border-zinc-800",
+      "row": "border-b border-zinc-800/50 hover:bg-zinc-800/50 transition-colors",
+      "cell": "py-2 font-mono"
+    },
+    "charts": {
+      "library": "Recharts",
+      "style": "Minimalist, no grid lines (or very subtle), neon strokes",
+      "colors": ["#14F195", "#9945FF", "#22C55E", "#EF4444"]
+    }
+  },
+  "visual_enhancers": {
+    "glassmorphism": "Use sparingly. Only for floating overlays (toasts, modals). backdrop-blur-md bg-black/80 border border-white/10",
+    "gradients": "NO background gradients. Use gradients only for text or subtle borders.",
+    "textures": "Subtle noise overlay on the main background to reduce 'digital flatness'.",
+    "animations": "Instant feedback. No slow fades. Snap transitions (duration-100)."
+  },
+  "assets": {
+    "images": [
+      {
+        "url": "https://images.unsplash.com/photo-1611974789855-9c2a0a7236a3?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2NjZ8MHwxfHNlYXJjaHwyfHxjcnlwdG8lMjB0cmFkaW5nJTIwY2hhcnQlMjBhYnN0cmFjdHxlbnwwfHx8fDE3NjkxNzEzNTZ8MA&ixlib=rb-4.1.0&q=85",
+        "category": "hero_bg",
+        "description": "Abstract data streaks for login/welcome screen background"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1639749910472-45ef232378da?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2NjZ8MHwxfHNlYXJjaHwxfHxjcnlwdG8lMjB0cmFkaW5nJTIwY2hhcnQlMjBhYnN0cmFjdHxlbnwwfHx8fDE3NjkxNzEzNTZ8MA&ixlib=rb-4.1.0&q=85",
+        "category": "card_bg",
+        "description": "Subtle abstract texture for specific high-value cards"
+      }
+    ],
+    "icons": "Lucide React (default). Use stroke-width={1.5} for a thin, technical look."
+  },
+  "universal_guidelines": [
+    "DO NOT use 'Inter' font. Use 'Manrope' for UI and 'JetBrains Mono' for data.",
+    "DO NOT use rounded-xl or rounded-2xl. Keep it sharp (rounded-sm or rounded-none).",
+    "DO NOT use generic blue (#3B82F6) for primary actions. Use Solana Green (#14F195).",
+    "ALWAYS use 'data-testid' on interactive elements.",
+    "ALWAYS format numbers with fixed decimals (e.g., 1.200 SOL) using monospace font.",
+    "Ensure high contrast for text (Zinc 200 on Zinc 950).",
+    "Use 'sonner' for notifications.",
+    "Create a 'layout.js' that enforces the dark theme class on the root element."
+  ],
+  "instructions_to_main_agent": "You are building a high-performance trading dashboard. Speed and clarity are paramount. 1. Install 'recharts' for charts. 2. Install 'lucide-react' for icons. 3. Configure Tailwind to use the specific colors defined in 'colors'. 4. Build the 'Dashboard' as a single-page view with a grid layout. 5. Mock the WebSocket data for now but structure the code to easily swap in a real socket connection."
+}
