@@ -2,6 +2,16 @@
 
 A comprehensive Solana trading bot with real-time data collection, automated trading, and risk management.
 
+## 🚀 Recent Updates (v2.0)
+
+✅ **Bug Fixes & Enhancements:**
+1. **Duplicate Transaction Prevention** - Fixed duplicate buy orders and take-profit executions
+2. **Venue Switching Logic** - Automatic Meteora DBC → DAMM V2 platform switching
+3. **Jito Tip Configuration** - Set to exactly 0.001 SOL for all transactions
+4. **Real Slippage for Paper Trading** - Integrated Meteora API for realistic PNL calculations
+
+📖 **See [FIXES_APPLIED.md](FIXES_APPLIED.md) for detailed documentation of all fixes**
+
 ## Features
 
 ### Core Functionality
@@ -45,7 +55,20 @@ A comprehensive Solana trading bot with real-time data collection, automated tra
 - Node.js 16+
 - MongoDB
 
-### Installation
+### Quick Setup (Termux/Arch Linux)
+
+**Automated Setup:**
+```bash
+./setup_termux.sh
+```
+
+This will automatically:
+- Check system requirements
+- Install all Python dependencies
+- Install all Node.js dependencies
+- Run verification tests
+
+**Manual Setup:**
 
 1. **Backend Setup**
 ```bash
@@ -88,6 +111,17 @@ REACT_APP_BACKEND_URL=https://your-domain.com
 ```
 
 ### Running the Bot
+
+**Quick Start (All services):**
+```bash
+# Start all services at once
+./start_bot.sh
+
+# Stop all services
+./stop_bot.sh
+```
+
+**Manual Start:**
 
 All services are managed by Supervisor:
 
@@ -142,13 +176,25 @@ Click "STOP BOT" to safely stop all trading activities. Active positions will re
 ### Backend (Python)
 - `server.py`: Main FastAPI server with WebSocket support
 - `data_fetcher.py`: Continuous token data collection from alph.ai
-- `trading_engine.py`: Trading logic and risk management
+- `trading_engine.py`: Trading logic, risk management, and venue switching
 - `position_manager.py`: Position tracking and statistics
+
+**Key Features:**
+- Anti-duplicate token tracking
+- Automatic venue switching (Meteora DBC → DAMM V2)
+- Real slippage calculation for paper trading
+- Lock mechanisms for position management
 
 ### Node.js Service
 - `trading_service.js`: Solana transaction execution using solana-trade package
-- Handles buy/sell trades via Jito for MEV protection
-- Supports batch trading
+- Handles buy/sell trades via Jito for MEV protection (0.001 SOL tip)
+- Supports batch trading (up to 2 tokens)
+- Meteora slippage query endpoint for paper trading
+
+**Key Endpoints:**
+- `/api/node/trade` - Execute single trade with Jito tip
+- `/api/node/batch-trade` - Execute batch trades (max 2 tokens)
+- `/api/node/get-slippage` - Query real slippage from Meteora
 
 ### Frontend (React)
 - `Dashboard.js`: Main trading interface
@@ -176,11 +222,18 @@ Click "STOP BOT" to safely stop all trading activities. Active positions will re
 
 1. **Token Discovery**: Data fetcher monitors alph.ai API every 100ms
 2. **Filtering**: Only tokens < 10 seconds old are selected
-3. **Anti-Duplicate**: Tracks seen tokens to prevent double-buying
-4. **Batch Execution**: Groups up to 2 tokens per transaction
-5. **Position Opening**: Tracks entry price, liquidity, timestamp
-6. **Monitoring**: Continuously checks positions against exit conditions
-7. **Exit Execution**: Automatically sells when conditions are met
+3. **Anti-Duplicate**: Tracks seen tokens AND purchased tokens to prevent double-buying
+4. **Venue Switching**: Automatically switches Meteora DBC tokens to DAMM V2 for optimal trading
+5. **Batch Execution**: Groups up to 2 tokens per transaction
+6. **Position Opening**: Tracks entry price, liquidity, timestamp, and venue
+7. **Monitoring**: Continuously checks positions against exit conditions
+8. **Exit Execution**: Automatically sells when conditions are met (with duplicate sell prevention)
+
+### Venue Switching Logic
+- Detects tokens on Meteora DBC (via poolName)
+- Automatically switches to METEORA_DAMM_V2 (platform code '8')
+- Applies to both buy and sell operations
+- Ensures consistent venue usage throughout position lifecycle
 
 ## Risk Warnings
 
@@ -205,9 +258,28 @@ Click "STOP BOT" to safely stop all trading activities. Active positions will re
   "stop_loss_percent": 30,
   "time_exit_minutes": 6,
   "liquidity_drop_percent": 30,
-  "slippage": 5
+  "slippage": 5,
+  "jito_tip": 0.001
 }
 ```
+
+**Note:** Jito tip is automatically set to 0.001 SOL for all transactions to ensure consistent MEV protection.
+
+## Testing & Verification
+
+**Run the comprehensive test suite:**
+```bash
+python3 test_fixes.py
+```
+
+This will verify:
+- ✓ Duplicate prevention mechanisms
+- ✓ Venue switching logic
+- ✓ Jito tip configuration
+- ✓ Slippage endpoint implementation
+- ✓ Paper trading enhancements
+- ✓ All dependencies installed
+- ✓ Service connectivity (if running)
 
 ## Troubleshooting
 

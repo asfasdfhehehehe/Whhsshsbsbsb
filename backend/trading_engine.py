@@ -21,16 +21,63 @@ class TradingEngine:
         self.paper_trading = config.get('paper_trading', True)
         self.running = False
         self.node_service_url = 'http://localhost:8002'
+        
+        # Anti-duplicate tracking
+        self.purchased_tokens = set()  # Track tokens that have been purchased
+        self.closing_positions = set()  # Track positions being closed to prevent duplicate sells
+        self.jito_tip = 0.001  # Default Jito tip in SOL
+
+    async def get_real_slippage(self, mint: str, amount: float, direction: str, platform: str) -> dict:
+        """Get real slippage from Meteora for paper trading"""
+        try:
+            async with aiohttp.ClientSession() as session:
+                payload = {
+                    'mint': mint,
+                    'amount': amount,
+                    'direction': direction,
+                    'slippage': self.slippage,
+                    'platform': platform
+                }
+                
+                async with session.post(
+                    f'{self.node_service_url}/api/node/get-slippage',
+                    json=payload,
+                    timeout=aiohttp.ClientTimeout(total=10)
+                ) as response:
+                    if response.status == 200:
+                        return await response.json()
+                    else:
+                        logger.warning(f'Failed to get real slippage, using default')
+                        return {'slippage': self.slippage, 'success': False}
+        except Exception as e:
+            logger.error(f'Error getting slippage: {e}')
+            return {'slippage': self.slippage, 'success': False}
 
     async def execute_trade(self, direction: str, mint: str, amount: float, platform: str, pool_address: str = None) -> dict:
         """Execute trade via Node.js service or simulate in paper trading mode"""
         if self.paper_trading:
-            # Paper trading simulation
+            # Get real slippage for paper trading
+            slippage_data = await self.get_real_slippage(mint, amount, direction, platform)
+            actual_slippage = slippage_data.get('slippage', self.slippage)
+            
+            # Calculate realistic execution with slippage and Jito tip
+            slippage_loss = amount * (actual_slippage / 100)
+            jito_cost = self.jito_tip
+            net_amount = amount - slippage_loss - jito_cost
+            
             logger.info(f'PAPER TRADE: {direction} {amount} SOL of {mint} on platform {platform}')
+            logger.info(f'  Slippage: {actual_slippage}% (-{slippage_loss:.6f} SOL)')
+            logger.info(f'  Jito Tip: -{jito_cost:.6f} SOL')
+            logger.info(f'  Net Amount: {net_amount:.6f} SOL')
+            
             return {
                 'success': True,
                 'signature': f'paper_{datetime.now(timezone.utc).timestamp()}',
-                'paper': True
+                'paper': True,
+                'slippage': actual_slippage,
+                'slippage_loss': slippage_loss,
+                'jito_tip': jito_cost,
+                'net_amount': net_amount
             }
         
         try:
@@ -42,7 +89,8 @@ class TradingEngine:
                     'slippage': self.slippage,
                     'privateKey': self.private_key,
                     'platform': platform,
-                    'poolAddress': pool_address
+                    'poolAddress': pool_address,
+                    'jitoTip': self.jito_tip  # Add Jito tip
                 }
                 
                 async with session.post(
@@ -70,22 +118,35 @@ class TradingEngine:
 
         if self.paper_trading:
             for token in tokens_to_buy:
+                # Apply venue switching logic for Meteora DBC
+                platform = self.apply_venue_switching(token)
+                
                 result = await self.execute_trade(
                     'buy',
                     token['token'],
                     self.amount_per_trade,
-                    token.get('platform', '1')
+                    platform
                 )
                 results.append(result)
         else:
             # Real batch trade
             try:
                 async with aiohttp.ClientSession() as session:
+                    # Apply venue switching for each token
+                    processed_tokens = []
+                    for t in tokens_to_buy:
+                        platform = self.apply_venue_switching(t)
+                        processed_tokens.append({
+                            'mint': t['token'], 
+                            'platform': platform
+                        })
+                    
                     payload = {
-                        'tokens': [{'mint': t['token'], 'platform': t.get('platform', '1')} for t in tokens_to_buy],
+                        'tokens': processed_tokens,
                         'privateKey': self.private_key,
                         'amount': self.amount_per_trade,
-                        'slippage': self.slippage
+                        'slippage': self.slippage,
+                        'jitoTip': self.jito_tip  # Add Jito tip
                     }
                     
                     async with session.post(
@@ -101,29 +162,78 @@ class TradingEngine:
 
         return results
 
+    def apply_venue_switching(self, token: Dict) -> str:
+        """
+        Apply venue switching logic: If token is on Meteora DBC, switch to DAMM V2
+        Returns the platform code to use for trading
+        """
+        platform = token.get('platform', '1')
+        pool_name = token.get('poolName', '').upper()
+        
+        # Check if token is on Meteora DBC
+        # Meteora DBC typically identified by poolName containing 'METEORA' but not 'DAMM'
+        # or platform code that indicates DBC (need to identify from API)
+        if 'METEORA' in pool_name and 'DBC' in pool_name:
+            logger.info(f'Token {token.get("token")} detected on Meteora DBC, switching to DAMM V2')
+            return '8'  # METEORA_DAMM_V2
+        
+        # If already on DAMM V2, keep it
+        if platform == '8':
+            logger.info(f'Token {token.get("token")} already on DAMM V2')
+            return '8'
+        
+        # For other platforms, use original
+        return platform
+
     async def process_new_tokens(self, tokens: List[Dict], broadcast_callback=None):
         """Process new tokens and execute buys"""
         if not self.running or not tokens:
             return
 
-        logger.info(f'Processing {len(tokens)} new tokens')
+        # Filter out tokens that have already been purchased (anti-duplicate)
+        new_tokens = []
+        for token in tokens:
+            mint = token['token']
+            if mint not in self.purchased_tokens and mint not in self.position_manager.active_positions:
+                new_tokens.append(token)
+            else:
+                logger.info(f'Skipping duplicate token: {mint}')
+
+        if not new_tokens:
+            return
+
+        logger.info(f'Processing {len(new_tokens)} new tokens')
         
         # Execute batch buy
-        results = await self.batch_buy_tokens(tokens)
+        results = await self.batch_buy_tokens(new_tokens)
 
         # Open positions for successful trades
-        for i, token in enumerate(tokens[:len(results)]):
+        for i, token in enumerate(new_tokens[:len(results)]):
             if i < len(results) and results[i].get('success'):
+                mint = token['token']
+                
+                # Mark as purchased to prevent duplicates
+                self.purchased_tokens.add(mint)
+                
                 price = float(token.get('price', 0))
-                token_amount = self.amount_per_trade / price if price > 0 else 0
+                
+                # Calculate effective amount after slippage and fees (for paper trading)
+                effective_amount = self.amount_per_trade
+                if self.paper_trading and 'net_amount' in results[i]:
+                    effective_amount = results[i]['net_amount']
+                
+                token_amount = effective_amount / price if price > 0 else 0
+                
+                # Apply venue switching to get actual platform used
+                platform_used = self.apply_venue_switching(token)
                 
                 position = self.position_manager.open_position(
                     token=token.get('code', 'UNKNOWN'),
-                    mint=token['token'],
+                    mint=mint,
                     entry_price=price,
                     amount_sol=self.amount_per_trade,
                     token_amount=token_amount,
-                    platform=token.get('poolName', 'Unknown'),
+                    platform=token.get('poolName', 'Unknown') + f' (Platform: {platform_used})',
                     liquidity_usdt=float(token.get('liquidityUsdt', 0))
                 )
                 
@@ -137,7 +247,10 @@ class TradingEngine:
                             'mint': position.mint,
                             'price': price,
                             'amount': self.amount_per_trade,
-                            'mode': 'paper' if self.paper_trading else 'live'
+                            'mode': 'paper' if self.paper_trading else 'live',
+                            'platform': platform_used,
+                            'slippage': results[i].get('slippage', self.slippage) if self.paper_trading else None,
+                            'jito_tip': results[i].get('jito_tip', self.jito_tip) if self.paper_trading else None
                         }
                     })
 
@@ -153,6 +266,10 @@ class TradingEngine:
         positions_to_close = []
 
         for mint, position in self.position_manager.active_positions.items():
+            # Skip if already being closed (prevent duplicate sells)
+            if mint in self.closing_positions:
+                continue
+                
             if mint not in price_lookup:
                 continue
 
@@ -192,23 +309,43 @@ class TradingEngine:
 
         # Execute closes
         for mint, exit_price, reason, token_data in positions_to_close:
-            # Execute sell
-            result = await self.execute_trade(
-                'sell',
-                mint,
-                self.position_manager.active_positions[mint].token_amount,
-                token_data.get('platform', '1')
-            )
-
-            if result.get('success'):
-                closed_position = self.position_manager.close_position(mint, exit_price, reason)
+            # Mark as closing to prevent duplicate executions
+            self.closing_positions.add(mint)
+            
+            try:
+                # Apply venue switching for sell as well
+                token_with_platform = {
+                    'token': mint,
+                    'platform': token_data.get('platform', '1'),
+                    'poolName': token_data.get('poolName', '')
+                }
+                platform_to_use = self.apply_venue_switching(token_with_platform)
                 
-                # Broadcast position closed event
-                if broadcast_callback and closed_position:
-                    await broadcast_callback({
-                        'type': 'position_closed',
-                        'data': closed_position.to_dict()
-                    })
+                # Execute sell
+                result = await self.execute_trade(
+                    'sell',
+                    mint,
+                    self.position_manager.active_positions[mint].token_amount,
+                    platform_to_use
+                )
+
+                if result.get('success'):
+                    closed_position = self.position_manager.close_position(mint, exit_price, reason)
+                    
+                    # Remove from purchased tokens so it can be bought again in future
+                    if mint in self.purchased_tokens:
+                        self.purchased_tokens.discard(mint)
+                    
+                    # Broadcast position closed event
+                    if broadcast_callback and closed_position:
+                        await broadcast_callback({
+                            'type': 'position_closed',
+                            'data': closed_position.to_dict()
+                        })
+            finally:
+                # Always remove from closing set
+                if mint in self.closing_positions:
+                    self.closing_positions.discard(mint)
 
     def update_config(self, config: dict):
         """Update trading configuration"""
