@@ -4,11 +4,13 @@ import json
 from datetime import datetime, timezone
 import logging
 from typing import List, Dict, Optional
+from pathlib import Path
+import os
 
 logger = logging.getLogger(__name__)
 
 class DataFetcher:
-    def __init__(self):
+    def __init__(self, data_dir: str = None):
         self.api_url = 'https://b.alph.ai/smart-web-gateway/snipe/list/graduated/sol'
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:146.0) Gecko/20100101 Firefox/146.0',
@@ -24,6 +26,38 @@ class DataFetcher:
         }
         self.session: Optional[aiohttp.ClientSession] = None
         self.seen_tokens = set()  # Anti-duplicate tracking
+        
+        # File persistence for seen tokens
+        if data_dir is None:
+            data_dir = os.path.join(os.path.dirname(__file__), 'data')
+        self.data_dir = Path(data_dir)
+        self.data_dir.mkdir(exist_ok=True)
+        self.seen_tokens_file = self.data_dir / 'seen_tokens.json'
+        
+        # Load seen tokens from file
+        self.load_seen_tokens()
+
+    def load_seen_tokens(self):
+        """Load seen tokens from file"""
+        try:
+            if self.seen_tokens_file.exists():
+                with open(self.seen_tokens_file, 'r') as f:
+                    data = json.load(f)
+                    self.seen_tokens = set(data)
+                logger.info(f'Loaded {len(self.seen_tokens)} seen tokens from file')
+        except Exception as e:
+            logger.error(f'Error loading seen tokens: {e}')
+    
+    def save_seen_tokens(self):
+        """Save seen tokens to file (keep last 10000)"""
+        try:
+            # Only keep the most recent tokens to prevent file from growing too large
+            tokens_to_save = list(self.seen_tokens)[-10000:]
+            with open(self.seen_tokens_file, 'w') as f:
+                json.dump(tokens_to_save, f)
+            logger.debug(f'Saved {len(tokens_to_save)} seen tokens to file')
+        except Exception as e:
+            logger.error(f'Error saving seen tokens: {e}')
 
     async def start(self):
         """Initialize aiohttp session"""
@@ -33,6 +67,8 @@ class DataFetcher:
         """Close aiohttp session"""
         if self.session:
             await self.session.close()
+        # Save seen tokens on shutdown
+        self.save_seen_tokens()
 
     async def fetch_tokens(self) -> List[Dict]:
         """Fetch tokens from alph.ai API"""
@@ -63,6 +99,7 @@ class DataFetcher:
         """Filter tokens by age and remove duplicates"""
         current_time = datetime.now(timezone.utc).timestamp() * 1000  # Convert to milliseconds
         filtered_tokens = []
+        tokens_added = False
 
         for token in tokens:
             token_address = token.get('token')
@@ -76,7 +113,12 @@ class DataFetcher:
             if token_age_ms < (max_age_seconds * 1000):
                 filtered_tokens.append(token)
                 self.seen_tokens.add(token_address)
+                tokens_added = True
                 logger.info(f'New token found: {token_address} (age: {token_age_ms}ms)')
+
+        # Save to file if new tokens were added
+        if tokens_added:
+            self.save_seen_tokens()
 
         return filtered_tokens
 
