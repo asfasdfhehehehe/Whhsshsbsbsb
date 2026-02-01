@@ -3,6 +3,7 @@ import aiohttp
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional
 import logging
+from threading import RLock
 from position_manager import PositionManager, Position
 
 logger = logging.getLogger(__name__)
@@ -22,9 +23,10 @@ class TradingEngine:
         self.running = False
         self.node_service_url = 'http://localhost:8002'
         
-        # Anti-duplicate tracking
+        # Anti-duplicate tracking with thread-safe locks
         self.purchased_tokens = set()  # Track tokens that have been purchased
         self.closing_positions = set()  # Track positions being closed to prevent duplicate sells
+        self.position_lock = RLock()  # Thread-safe lock for position operations
         self.jito_tip = 0.001  # Default Jito tip in SOL
 
     async def get_real_slippage(self, mint: str, amount: float, direction: str, platform: str) -> dict:
@@ -192,12 +194,13 @@ class TradingEngine:
 
         # Filter out tokens that have already been purchased (anti-duplicate)
         new_tokens = []
-        for token in tokens:
-            mint = token['token']
-            if mint not in self.purchased_tokens and mint not in self.position_manager.active_positions:
-                new_tokens.append(token)
-            else:
-                logger.info(f'Skipping duplicate token: {mint}')
+        with self.position_lock:
+            for token in tokens:
+                mint = token['token']
+                if mint not in self.purchased_tokens and mint not in self.position_manager.active_positions:
+                    new_tokens.append(token)
+                else:
+                    logger.info(f'Skipping duplicate token: {mint}')
 
         if not new_tokens:
             return
@@ -212,8 +215,9 @@ class TradingEngine:
             if i < len(results) and results[i].get('success'):
                 mint = token['token']
                 
-                # Mark as purchased to prevent duplicates
-                self.purchased_tokens.add(mint)
+                # Mark as purchased to prevent duplicates (thread-safe)
+                with self.position_lock:
+                    self.purchased_tokens.add(mint)
                 
                 price = float(token.get('price', 0))
                 
@@ -265,53 +269,54 @@ class TradingEngine:
 
         positions_to_close = []
 
-        for mint, position in self.position_manager.active_positions.items():
-            # Skip if already being closed (prevent duplicate sells)
-            if mint in self.closing_positions:
-                continue
-                
-            if mint not in price_lookup:
-                continue
+        # Thread-safe position checking
+        with self.position_lock:
+            for mint, position in list(self.position_manager.active_positions.items()):
+                # Skip if already being closed (prevent duplicate sells)
+                if mint in self.closing_positions:
+                    continue
+                    
+                if mint not in price_lookup:
+                    continue
 
-            token_data = price_lookup[mint]
-            current_price = float(token_data.get('price', 0))
-            current_liquidity = float(token_data.get('liquidityUsdt', 0))
+                token_data = price_lookup[mint]
+                current_price = float(token_data.get('price', 0))
+                current_liquidity = float(token_data.get('liquidityUsdt', 0))
 
-            if current_price == 0:
-                continue
+                if current_price == 0:
+                    continue
 
-            # Calculate current PnL
-            pnl_sol, pnl_percent = position.calculate_pnl(current_price)
+                # Calculate current PnL
+                pnl_sol, pnl_percent = position.calculate_pnl(current_price)
 
-            # Check exit conditions
-            exit_reason = None
+                # Check exit conditions
+                exit_reason = None
 
-            # Take Profit
-            if pnl_percent >= self.take_profit_percent:
-                exit_reason = f'Take Profit ({pnl_percent:.2f}%)'
+                # Take Profit
+                if pnl_percent >= self.take_profit_percent:
+                    exit_reason = f'Take Profit ({pnl_percent:.2f}%)'
 
-            # Stop Loss
-            elif pnl_percent <= -self.stop_loss_percent:
-                exit_reason = f'Stop Loss ({pnl_percent:.2f}%)'
+                # Stop Loss
+                elif pnl_percent <= -self.stop_loss_percent:
+                    exit_reason = f'Stop Loss ({pnl_percent:.2f}%)'
 
-            # Time-based exit
-            elif (current_time - position.entry_time) > timedelta(minutes=self.time_exit_minutes):
-                exit_reason = f'Time Exit ({self.time_exit_minutes}min)'
+                # Time-based exit
+                elif (current_time - position.entry_time) > timedelta(minutes=self.time_exit_minutes):
+                    exit_reason = f'Time Exit ({self.time_exit_minutes}min)'
 
-            # Liquidity drop
-            elif position.entry_liquidity > 0:
-                liquidity_percent = (current_liquidity / position.entry_liquidity) * 100
-                if liquidity_percent < (100 - self.liquidity_drop_percent):
-                    exit_reason = f'Liquidity Drop ({liquidity_percent:.1f}%)'
+                # Liquidity drop
+                elif position.entry_liquidity > 0:
+                    liquidity_percent = (current_liquidity / position.entry_liquidity) * 100
+                    if liquidity_percent < (100 - self.liquidity_drop_percent):
+                        exit_reason = f'Liquidity Drop ({liquidity_percent:.1f}%)'
 
-            if exit_reason:
-                positions_to_close.append((mint, current_price, exit_reason, token_data))
+                if exit_reason:
+                    # Mark as closing immediately (thread-safe)
+                    self.closing_positions.add(mint)
+                    positions_to_close.append((mint, current_price, exit_reason, token_data))
 
-        # Execute closes
+        # Execute closes outside the lock to avoid blocking
         for mint, exit_price, reason, token_data in positions_to_close:
-            # Mark as closing to prevent duplicate executions
-            self.closing_positions.add(mint)
-            
             try:
                 # Apply venue switching for sell as well
                 token_with_platform = {
@@ -321,20 +326,28 @@ class TradingEngine:
                 }
                 platform_to_use = self.apply_venue_switching(token_with_platform)
                 
+                # Get token amount in a thread-safe way
+                with self.position_lock:
+                    position = self.position_manager.active_positions.get(mint)
+                    if not position:
+                        continue
+                    token_amount = position.token_amount
+                
                 # Execute sell
                 result = await self.execute_trade(
                     'sell',
                     mint,
-                    self.position_manager.active_positions[mint].token_amount,
+                    token_amount,
                     platform_to_use
                 )
 
                 if result.get('success'):
                     closed_position = self.position_manager.close_position(mint, exit_price, reason)
                     
-                    # Remove from purchased tokens so it can be bought again in future
-                    if mint in self.purchased_tokens:
-                        self.purchased_tokens.discard(mint)
+                    # Remove from purchased tokens so it can be bought again in future (thread-safe)
+                    with self.position_lock:
+                        if mint in self.purchased_tokens:
+                            self.purchased_tokens.discard(mint)
                     
                     # Broadcast position closed event
                     if broadcast_callback and closed_position:
@@ -342,10 +355,13 @@ class TradingEngine:
                             'type': 'position_closed',
                             'data': closed_position.to_dict()
                         })
+            except Exception as e:
+                logger.error(f'Error closing position {mint}: {e}')
             finally:
-                # Always remove from closing set
-                if mint in self.closing_positions:
-                    self.closing_positions.discard(mint)
+                # Always remove from closing set (thread-safe)
+                with self.position_lock:
+                    if mint in self.closing_positions:
+                        self.closing_positions.discard(mint)
 
     def update_config(self, config: dict):
         """Update trading configuration"""

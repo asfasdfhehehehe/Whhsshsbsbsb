@@ -160,11 +160,16 @@ function Dashboard() {
         setBotRunning(false);
         toast.info('Bot stopped');
         addLog('Bot stopped', 'warning');
+      } else if (response.data.status === 'error' || response.data.error) {
+        const errorMsg = response.data.error || 'Unknown error occurred';
+        toast.error(errorMsg);
+        addLog(`Error: ${errorMsg}`, 'error');
       }
     } catch (error) {
       console.error('Error controlling bot:', error);
-      toast.error('Failed to control bot');
-      addLog('Error controlling bot', 'error');
+      const errorMsg = error.response?.data?.error || error.message || 'Failed to control bot';
+      toast.error(errorMsg);
+      addLog(`Error: ${errorMsg}`, 'error');
     } finally {
       setLoading(false);
     }

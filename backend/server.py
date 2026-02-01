@@ -63,25 +63,36 @@ async def root():
 async def control_bot(control: BotControl):
     global trading_engine
     
-    if control.action == 'start':
-        if not control.config:
-            return {"error": "Configuration required to start bot"}
+    try:
+        if control.action == 'start':
+            if not control.config:
+                logger.error("Configuration required to start bot")
+                return {"error": "Configuration required to start bot", "status": "error"}
+            
+            # Initialize trading engine if not exists
+            if not trading_engine:
+                logger.info("Initializing new trading engine")
+                trading_engine = TradingEngine(position_manager, control.config.dict())
+            else:
+                logger.info("Updating existing trading engine config")
+                trading_engine.update_config(control.config.dict())
+            
+            trading_engine.start()
+            logger.info(f"Trading engine started in {'paper' if control.config.paper_trading else 'live'} mode")
+            return {"status": "started", "paper_trading": control.config.paper_trading}
         
-        # Initialize trading engine if not exists
-        if not trading_engine:
-            trading_engine = TradingEngine(position_manager, control.config.dict())
-        else:
-            trading_engine.update_config(control.config.dict())
+        elif control.action == 'stop':
+            if trading_engine:
+                trading_engine.stop()
+                logger.info("Trading engine stopped")
+            return {"status": "stopped"}
         
-        trading_engine.start()
-        return {"status": "started", "paper_trading": control.config.paper_trading}
+        logger.warning(f"Invalid action received: {control.action}")
+        return {"error": "Invalid action", "status": "error"}
     
-    elif control.action == 'stop':
-        if trading_engine:
-            trading_engine.stop()
-        return {"status": "stopped"}
-    
-    return {"error": "Invalid action"}
+    except Exception as e:
+        logger.error(f"Error in bot control: {e}", exc_info=True)
+        return {"error": f"Failed to control bot: {str(e)}", "status": "error"}
 
 @api_router.get("/bot/status")
 async def get_bot_status():
