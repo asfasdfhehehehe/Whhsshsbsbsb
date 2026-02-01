@@ -1,6 +1,5 @@
 import asyncio
 import aiohttp
-import json
 from datetime import datetime, timezone
 import logging
 from typing import List, Dict, Optional
@@ -9,7 +8,8 @@ logger = logging.getLogger(__name__)
 
 class DataFetcher:
     def __init__(self):
-        self.api_url = 'https://b.alph.ai/smart-web-gateway/snipe/list/graduated/sol'
+        self.graduated_api_url = 'https://b.alph.ai/smart-web-gateway/snipe/list/graduated/sol'
+        self.new_api_url = 'https://b.alph.ai/smart-web-gateway/snipe/list/new/sol'
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:146.0) Gecko/20100101 Firefox/146.0',
             'Accept': 'application/json, text/plain, */*',
@@ -34,8 +34,8 @@ class DataFetcher:
         if self.session:
             await self.session.close()
 
-    async def fetch_tokens(self) -> List[Dict]:
-        """Fetch tokens from alph.ai API"""
+    async def fetch_tokens_from_source(self, api_url: str) -> List[Dict]:
+        """Fetch tokens from a single API source"""
         try:
             json_data = {
                 'language': 'en_US',
@@ -43,7 +43,7 @@ class DataFetcher:
             }
 
             async with self.session.post(
-                self.api_url,
+                api_url,
                 headers=self.headers,
                 cookies=self.cookies,
                 json=json_data,
@@ -53,11 +53,63 @@ class DataFetcher:
                     data = await response.json()
                     return data.get('data', []) if isinstance(data, dict) else data
                 else:
-                    logger.error(f'API request failed: {response.status}')
+                    logger.error(f'API request failed for {api_url}: {response.status}')
                     return []
         except Exception as e:
-            logger.error(f'Error fetching tokens: {e}')
+            logger.error(f'Error fetching tokens from {api_url}: {e}')
             return []
+
+    async def fetch_tokens(self) -> List[Dict]:
+        """Fetch tokens from both API sources in parallel"""
+        try:
+            # Fetch from both sources in parallel
+            graduated_tokens, new_tokens = await asyncio.gather(
+                self.fetch_tokens_from_source(self.graduated_api_url),
+                self.fetch_tokens_from_source(self.new_api_url)
+            )
+            
+            # Apply filtering to new tokens source
+            filtered_new_tokens = self.filter_new_source_tokens(new_tokens)
+            
+            # Apply unified TP/SL to all tokens
+            all_tokens = self.apply_unified_tp_sl(graduated_tokens + filtered_new_tokens)
+            
+            return all_tokens
+        except Exception as e:
+            logger.error(f'Error fetching tokens from both sources: {e}')
+            return []
+
+    def filter_new_source_tokens(self, tokens: List[Dict]) -> List[Dict]:
+        """Filter new source tokens by market cap and liquidity"""
+        filtered_tokens = []
+        
+        for token in tokens:
+            try:
+                # Extract market cap and liquidity values
+                market_cap = float(token.get('marketCap', 0))
+                liquidity = float(token.get('liquidityUsdt', 0))
+                
+                # Apply filters: market cap > 12,000 and liquidity > 3,000
+                if market_cap > 12000 and liquidity > 3000:
+                    filtered_tokens.append(token)
+            except (ValueError, TypeError):
+                # Skip tokens with invalid market cap or liquidity values
+                continue
+        
+        return filtered_tokens
+
+    def apply_unified_tp_sl(self, tokens: List[Dict]) -> List[Dict]:
+        """Apply unified TP/SL values to all tokens"""
+        processed_tokens = []
+        
+        for token in tokens:
+            # Apply TP=x2 (200%) and SL=30% to all tokens
+            processed_token = token.copy()
+            processed_token['take_profit'] = 200.0  # x2 = 200%
+            processed_token['stop_loss'] = 30.0    # 30%
+            processed_tokens.append(processed_token)
+        
+        return processed_tokens
 
     def filter_new_tokens(self, tokens: List[Dict], max_age_seconds: int = 10) -> List[Dict]:
         """Filter tokens by age and remove duplicates"""

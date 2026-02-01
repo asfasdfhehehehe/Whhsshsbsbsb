@@ -1,9 +1,8 @@
-import asyncio
 import aiohttp
 from datetime import datetime, timezone, timedelta
-from typing import Dict, List, Optional
+from typing import Dict, List
 import logging
-from position_manager import PositionManager, Position
+from position_manager import PositionManager
 
 logger = logging.getLogger(__name__)
 
